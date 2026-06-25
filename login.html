@@ -148,11 +148,26 @@
         if (error) throw error;
         if (!data || !data.user) throw new Error('登录返回数据为空');
 
-        const { data: profile } = await getSupabase()
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
+        let profile = null;
+        try {
+          const { data: profileData } = await getSupabase()
+            .from('profiles')
+            .select('*')
+            .eq('id', data.user.id)
+            .single();
+          profile = profileData;
+        } catch (e) {
+          // profile 可能不存在，尝试从 user_metadata 推断
+        }
+
+        // 如果 profile 不存在，用 user_metadata 兜底
+        if (!profile && data.user.user_metadata) {
+          profile = {
+            id: data.user.id,
+            name: data.user.user_metadata.name || '未知',
+            role: data.user.user_metadata.role || 'male'
+          };
+        }
 
         setCurrentUser({ ...data.user, ...profile });
         window.location.href = 'index.html';
@@ -204,6 +219,17 @@
 
         if (data.user && data.session) {
           // 有 user 和 session = 注册成功且已登录
+          // 手动创建 profile（不依赖触发器）
+          try {
+            await getSupabase().from('profiles').upsert({
+              id: data.user.id,
+              name: name,
+              role: role
+            });
+          } catch (profileErr) {
+            // profile 创建失败不影响注册流程，后续可补救
+            console.warn('Profile 创建失败:', profileErr);
+          }
           setCurrentUser({ ...data.user, name, role });
           showToast('注册成功！');
           setTimeout(() => { window.location.href = 'index.html'; }, 500);
