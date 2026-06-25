@@ -195,6 +195,40 @@
       btn.disabled = true;
 
       try {
+        // ---- 注册限制：检查已有账号数量 ----
+        const { count, error: countErr } = await getSupabase()
+          .from('profiles')
+          .select('*', { count: 'exact', head: true });
+
+        if (countErr) {
+          showError('系统检查失败：' + countErr.message);
+          btn.textContent = '注 册';
+          btn.disabled = false;
+          return;
+        }
+
+        if (count >= 2) {
+          showError('注册已关闭。这个网站只属于两个人，目前两个账号已满。');
+          btn.textContent = '注 册';
+          btn.disabled = false;
+          return;
+        }
+
+        // ---- 检查是否已有相同身份的人注册了 ----
+        const { data: existingRole } = await getSupabase()
+          .from('profiles')
+          .select('id')
+          .eq('role', role)
+          .maybeSingle();
+
+        if (existingRole) {
+          const roleName = role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME;
+          showError(roleName + '的账号已经存在，不能重复注册。');
+          btn.textContent = '注 册';
+          btn.disabled = false;
+          return;
+        }
+
         const name = role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME;
         const result = await getSupabase().auth.signUp({
           email,
