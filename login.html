@@ -67,20 +67,41 @@
     const errorBox = document.getElementById('errorBox');
     let isLoginMode = true;
 
+    // 启动时检查配置是否加载成功
+    (function checkConfig() {
+      if (typeof CONFIG === 'undefined') {
+        showError('配置加载失败：js/config.js 未正确加载');
+        return;
+      }
+      if (!CONFIG.SUPABASE_URL || CONFIG.SUPABASE_URL.includes('你的项目ID')) {
+        showError('配置错误：SUPABASE_URL 未替换为实际值');
+        return;
+      }
+      if (!CONFIG.SUPABASE_KEY || CONFIG.SUPABASE_KEY.includes('你的anon')) {
+        showError('配置错误：SUPABASE_KEY 未替换为实际值');
+        return;
+      }
+      initSupabase();
+    })();
+
     // 如果已登录，直接跳转到首页
     (async () => {
-      initSupabase();
-      const { data: { session } } = await getSupabase().auth.getSession();
-      if (session) {
-        const { data: profile } = await getSupabase()
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-        if (profile) {
-          setCurrentUser({ ...session.user, ...profile });
-          window.location.href = 'index.html';
+      if (typeof getSupabase !== 'function') return;
+      try {
+        const { data: { session } } = await getSupabase().auth.getSession();
+        if (session) {
+          const { data: profile } = await getSupabase()
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+          if (profile) {
+            setCurrentUser({ ...session.user, ...profile });
+            window.location.href = 'index.html';
+          }
         }
+      } catch (e) {
+        // 忽略：未登录状态
       }
     })();
 
@@ -125,6 +146,7 @@
       try {
         const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
         if (error) throw error;
+        if (!data || !data.user) throw new Error('登录返回数据为空');
 
         const { data: profile } = await getSupabase()
           .from('profiles')
@@ -159,24 +181,40 @@
 
       try {
         const name = role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME;
-        const { data, error } = await getSupabase().auth.signUp({
+        const result = await getSupabase().auth.signUp({
           email,
           password,
           options: {
             data: { name, role }
           }
         });
-        if (error) throw error;
 
-        if (data.user) {
+        const { data, error } = result;
+
+        // 显示详细错误信息
+        if (error) {
+          showError('Supabase 错误：' + error.message + ' (状态码: ' + (error.status || '未知') + ')');
+          return;
+        }
+
+        if (!data) {
+          showError('注册失败：Supabase 返回空数据。可能原因：1) 邮箱验证未关闭 2) 项目配置问题');
+          return;
+        }
+
+        if (data.user && data.session) {
+          // 有 user 和 session = 注册成功且已登录
           setCurrentUser({ ...data.user, name, role });
           showToast('注册成功！');
           setTimeout(() => { window.location.href = 'index.html'; }, 500);
+        } else if (data.user && !data.session) {
+          // 有 user 无 session = 需要邮箱验证
+          showError('注册请求已提交，但需要验证邮箱。请在 Supabase 控制台 → Authentication → Settings 中关闭 "Confirm email"');
         } else {
-          showError('注册失败，请检查邮箱是否已被使用');
+          showError('注册失败，返回数据异常：' + JSON.stringify(data));
         }
       } catch (err) {
-        showError(err.message || '注册失败');
+        showError('请求异常：' + (err.message || '未知错误'));
       } finally {
         btn.textContent = '注 册';
         btn.disabled = false;
