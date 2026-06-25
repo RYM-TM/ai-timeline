@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI · 留言板</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase.js"></script>
+  <script src="js/utils.js"></script>
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <a href="index.html" class="navbar-brand">
+        AI<span class="dot"></span><span style="font-weight:400;font-size:15px;color:var(--ink-light);">我们的时光</span>
+      </a>
+      <div class="navbar-nav">
+        <a href="index.html">时间线</a>
+        <a href="album.html">相册</a>
+        <a href="messages.html" class="active">留言板</a>
+        <a href="wishes.html">愿望清单</a>
+        <a href="anniversaries.html">纪念日</a>
+      </div>
+      <div class="navbar-actions">
+        <div class="navbar-user" id="userInfo">
+          <div class="avatar avatar-ren" id="userAvatar">砚</div>
+          <span class="name" id="userName">任砚铭</span>
+        </div>
+        <button class="btn btn-outline btn-sm" id="logoutBtn">退出</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="full-page">
+    <div class="page-header">
+      <h2>留言板</h2>
+      <p>这里的话会永远留在这里</p>
+    </div>
+
+    <div class="card" style="max-width:700px;margin:0 auto;">
+      <div class="card-body" id="messageList">
+        <div class="loading">加载中...</div>
+      </div>
+      <div class="message-input-area">
+        <input type="text" id="messageInput" placeholder="想说点什么？" maxlength="500">
+        <button class="btn btn-primary" id="sendBtn">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentUser = null;
+    let allProfiles = {};
+
+    (async function init() {
+      if (!requireAuth()) return;
+      currentUser = getCurrentUser();
+      initSupabase();
+      updateUserUI();
+      await loadProfiles();
+      await loadMessages();
+      setupEvents();
+    })();
+
+    function updateUserUI() {
+      document.getElementById('userAvatar').textContent = getUserAvatar(currentUser);
+      document.getElementById('userAvatar').className = 'avatar ' + getUserAvatarClass(currentUser);
+      document.getElementById('userName').textContent = getUserName(currentUser);
+    }
+
+    async function loadProfiles() {
+      const { data } = await getSupabase().from('profiles').select('*');
+      if (data) data.forEach(p => { allProfiles[p.id] = p; });
+    }
+
+    function getProfileName(userId) {
+      const p = allProfiles[userId];
+      return p ? (p.role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME) : '未知';
+    }
+
+    function getProfileAvatar(userId) {
+      const p = allProfiles[userId];
+      return p ? (p.role === 'male' ? CONFIG.MALE_AVATAR : CONFIG.FEMALE_AVATAR) : '?';
+    }
+
+    function getProfileAvatarClass(userId) {
+      const p = allProfiles[userId];
+      return p ? (p.role === 'male' ? 'avatar-ren' : 'avatar-tian') : '';
+    }
+
+    async function loadMessages() {
+      const container = document.getElementById('messageList');
+      try {
+        const { data, error } = await getSupabase()
+          .from('messages')
+          .select('*')
+          .or(`from_user.eq.${currentUser.id},to_user.eq.${currentUser.id}`)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          container.innerHTML = '<p style="text-align:center;color:var(--ink-muted);padding:20px;">还没有留言，先发一条吧</p>';
+          return;
+        }
+
+        container.innerHTML = data.map(msg => {
+          const isFromMe = msg.from_user === currentUser.id;
+          const name = getProfileName(msg.from_user);
+          const avatar = getProfileAvatar(msg.from_user);
+          const avatarClass = getProfileAvatarClass(msg.from_user);
+          return `
+            <div class="message-item">
+              <div class="msg-avatar ${avatarClass}">${avatar}</div>
+              <div class="msg-content">
+                <div class="msg-header">
+                  <span class="msg-name">${name}${isFromMe ? '（我）' : ''}</span>
+                  <span class="msg-time">${formatDate(msg.created_at)}</span>
+                </div>
+                <div class="msg-text">${escapeHTML(msg.content)}</div>
+              </div>
+            </div>`;
+        }).join('');
+
+        // 滚动到底部
+        container.scrollTop = container.scrollHeight;
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">加载失败：${err.message}</div>`;
+      }
+    }
+
+    function setupEvents() {
+      const otherUserId = allProfiles
+        ? Object.keys(allProfiles).find(id => id !== currentUser.id)
+        : null;
+
+      document.getElementById('sendBtn').addEventListener('click', async () => {
+        const input = document.getElementById('messageInput');
+        const content = input.value.trim();
+        if (!content) return;
+        if (!otherUserId) {
+          showToast('对方还没有注册');
+          return;
+        }
+
+        const btn = document.getElementById('sendBtn');
+        btn.disabled = true;
+        btn.textContent = '发送中...';
+
+        try {
+          const { error } = await getSupabase().from('messages').insert({
+            from_user: currentUser.id,
+            to_user: otherUserId,
+            content
+          });
+          if (error) throw error;
+          input.value = '';
+          await loadMessages();
+        } catch (err) {
+          showToast('发送失败：' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '发送';
+        }
+      });
+
+      document.getElementById('messageInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('sendBtn').click();
+      });
+
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await getSupabase().auth.signOut();
+        clearCurrentUser();
+        window.location.href = 'login.html';
+      });
+    }
+  </script>
+</body>
+</html>

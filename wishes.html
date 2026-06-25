@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI · 愿望清单</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase.js"></script>
+  <script src="js/utils.js"></script>
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <a href="index.html" class="navbar-brand">
+        AI<span class="dot"></span><span style="font-weight:400;font-size:15px;color:var(--ink-light);">我们的时光</span>
+      </a>
+      <div class="navbar-nav">
+        <a href="index.html">时间线</a>
+        <a href="album.html">相册</a>
+        <a href="messages.html">留言板</a>
+        <a href="wishes.html" class="active">愿望清单</a>
+        <a href="anniversaries.html">纪念日</a>
+      </div>
+      <div class="navbar-actions">
+        <div class="navbar-user" id="userInfo">
+          <div class="avatar avatar-ren" id="userAvatar">砚</div>
+          <span class="name" id="userName">任砚铭</span>
+        </div>
+        <button class="btn btn-outline btn-sm" id="logoutBtn">退出</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="full-page">
+    <div class="page-header">
+      <h2>愿望清单</h2>
+      <p>一起想做的事，一起完成</p>
+    </div>
+
+    <div class="card" style="max-width:700px;margin:0 auto 20px;">
+      <div class="form-group">
+        <label>添加一个愿望</label>
+        <div style="display:flex;gap:10px;">
+          <input type="text" id="wishTitle" placeholder="想一起做什么？" style="flex:1;">
+          <button class="btn btn-primary" id="addWishBtn">添加</button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <input type="text" id="wishDesc" placeholder="补充描述（可选）">
+      </div>
+    </div>
+
+    <div class="card" style="max-width:700px;margin:0 auto;">
+      <div class="card-body" id="wishList">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <button class="fab" id="writeFab" style="display:none;"></button>
+
+  <script>
+    let currentUser = null;
+    let allProfiles = {};
+
+    (async function init() {
+      if (!requireAuth()) return;
+      currentUser = getCurrentUser();
+      initSupabase();
+      updateUserUI();
+      await loadProfiles();
+      await loadWishes();
+      setupEvents();
+    })();
+
+    function updateUserUI() {
+      document.getElementById('userAvatar').textContent = getUserAvatar(currentUser);
+      document.getElementById('userAvatar').className = 'avatar ' + getUserAvatarClass(currentUser);
+      document.getElementById('userName').textContent = getUserName(currentUser);
+    }
+
+    async function loadProfiles() {
+      const { data } = await getSupabase().from('profiles').select('*');
+      if (data) data.forEach(p => { allProfiles[p.id] = p; });
+    }
+
+    function getProfileName(userId) {
+      const p = allProfiles[userId];
+      return p ? (p.role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME) : '未知';
+    }
+
+    async function loadWishes() {
+      const container = document.getElementById('wishList');
+      try {
+        const { data, error } = await getSupabase()
+          .from('wishes')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          container.innerHTML = '<p style="text-align:center;color:var(--ink-muted);padding:20px;">还没有愿望，一起添加第一个吧</p>';
+          return;
+        }
+
+        // 分开已完成和未完成
+        const pending = data.filter(w => !w.completed);
+        const done = data.filter(w => w.completed);
+
+        let html = '';
+
+        if (pending.length > 0) {
+          html += '<h4 style="margin-bottom:12px;color:var(--ink-light);">待完成</h4>';
+          html += pending.map(w => renderWishItem(w)).join('');
+        }
+
+        if (done.length > 0) {
+          html += '<h4 style="margin:20px 0 12px;color:var(--ink-muted);">已完成</h4>';
+          html += done.map(w => renderWishItem(w)).join('');
+        }
+
+        container.innerHTML = html || '<p style="text-align:center;color:var(--ink-muted);padding:20px;">还没有愿望</p>';
+
+        // 绑定完成按钮事件
+        container.querySelectorAll('.wish-checkbox').forEach(cb => {
+          cb.addEventListener('click', async function() {
+            const wishId = parseInt(this.dataset.id);
+            const isDone = this.classList.contains('done');
+            if (isDone) return;
+
+            const { error } = await getSupabase().from('wishes').update({
+              completed: true,
+              completed_at: new Date().toISOString(),
+              completed_by: currentUser.id
+            }).eq('id', wishId);
+
+            if (error) {
+              showToast('操作失败：' + error.message);
+              return;
+            }
+            showToast('愿望达成！');
+            loadWishes();
+          });
+        });
+
+        // 绑定删除按钮
+        container.querySelectorAll('.wish-delete').forEach(btn => {
+          btn.addEventListener('click', async function() {
+            const wishId = parseInt(this.dataset.id);
+            if (!confirm('确定删除这个愿望吗？')) return;
+            const { error } = await getSupabase().from('wishes').delete().eq('id', wishId);
+            if (error) {
+              showToast('删除失败：' + error.message);
+              return;
+            }
+            showToast('已删除');
+            loadWishes();
+          });
+        });
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">加载失败：${err.message}</div>`;
+      }
+    }
+
+    function renderWishItem(w) {
+      const creatorName = getProfileName(w.created_by);
+      const completedInfo = w.completed
+        ? `<div class="wish-meta">${getProfileName(w.completed_by)} 完成于 ${formatDate(w.completed_at)}</div>`
+        : `<div class="wish-meta">由 ${creatorName} 添加</div>`;
+
+      return `
+        <div class="wish-item">
+          <div class="wish-checkbox ${w.completed ? 'done' : ''}" data-id="${w.id}">
+            ${w.completed ? '✓' : ''}
+          </div>
+          <div class="wish-info ${w.completed ? 'done' : ''}">
+            <div class="wish-title">${escapeHTML(w.title)}</div>
+            ${w.description ? `<div class="wish-desc">${escapeHTML(w.description)}</div>` : ''}
+            ${completedInfo}
+          </div>
+          <button class="btn btn-outline btn-sm wish-delete" data-id="${w.id}" style="flex-shrink:0;">删除</button>
+        </div>`;
+    }
+
+    function setupEvents() {
+      document.getElementById('addWishBtn').addEventListener('click', async () => {
+        const title = document.getElementById('wishTitle').value.trim();
+        const desc = document.getElementById('wishDesc').value.trim();
+        if (!title) { showToast('请输入愿望'); return; }
+
+        const btn = document.getElementById('addWishBtn');
+        btn.disabled = true;
+        btn.textContent = '添加中...';
+
+        try {
+          const { error } = await getSupabase().from('wishes').insert({
+            title,
+            description: desc || null,
+            created_by: currentUser.id
+          });
+          if (error) throw error;
+          document.getElementById('wishTitle').value = '';
+          document.getElementById('wishDesc').value = '';
+          showToast('愿望已添加！');
+          await loadWishes();
+        } catch (err) {
+          showToast('添加失败：' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '添加';
+        }
+      });
+
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await getSupabase().auth.signOut();
+        clearCurrentUser();
+        window.location.href = 'login.html';
+      });
+    }
+  </script>
+</body>
+</html>

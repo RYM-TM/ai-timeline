@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI · 登录</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase.js"></script>
+  <script src="js/utils.js"></script>
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-card">
+      <div class="brand">AI</div>
+      <div class="brand-sub">我们的时光</div>
+
+      <div id="errorBox" class="error-msg hidden"></div>
+
+      <!-- 登录表单 -->
+      <form id="loginForm">
+        <div class="form-group">
+          <label>邮箱</label>
+          <input type="email" id="loginEmail" placeholder="输入你的邮箱" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label>密码</label>
+          <input type="password" id="loginPassword" placeholder="输入密码" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary">登 录</button>
+      </form>
+
+      <!-- 注册表单（默认隐藏） -->
+      <form id="registerForm" class="hidden">
+        <div class="form-group">
+          <label>你是谁</label>
+          <select id="regRole" required>
+            <option value="">请选择</option>
+            <option value="male">任砚铭</option>
+            <option value="female">田敏</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>邮箱</label>
+          <input type="email" id="regEmail" placeholder="设置登录邮箱" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label>密码</label>
+          <input type="password" id="regPassword" placeholder="设置密码（至少6位）" required minlength="6" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary">注 册</button>
+      </form>
+
+      <div class="auth-switch">
+        <span id="switchText">还没有账号？</span>
+        <a href="#" id="switchLink">注册</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const switchLink = document.getElementById('switchLink');
+    const switchText = document.getElementById('switchText');
+    const errorBox = document.getElementById('errorBox');
+    let isLoginMode = true;
+
+    // 如果已登录，直接跳转到首页
+    (async () => {
+      initSupabase();
+      const { data: { session } } = await getSupabase().auth.getSession();
+      if (session) {
+        const { data: profile } = await getSupabase()
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        if (profile) {
+          setCurrentUser({ ...session.user, ...profile });
+          window.location.href = 'index.html';
+        }
+      }
+    })();
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.remove('hidden');
+    }
+
+    function hideError() {
+      errorBox.classList.add('hidden');
+    }
+
+    // 切换登录/注册
+    switchLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      hideError();
+      isLoginMode = !isLoginMode;
+      if (isLoginMode) {
+        loginForm.classList.remove('hidden');
+        registerForm.classList.add('hidden');
+        switchText.textContent = '还没有账号？';
+        switchLink.textContent = '注册';
+      } else {
+        loginForm.classList.add('hidden');
+        registerForm.classList.remove('hidden');
+        switchText.textContent = '已有账号？';
+        switchLink.textContent = '登录';
+      }
+    });
+
+    // 登录
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+
+      const btn = loginForm.querySelector('button');
+      btn.textContent = '登录中...';
+      btn.disabled = true;
+
+      try {
+        const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+        if (error) throw error;
+
+        const { data: profile } = await getSupabase()
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+
+        setCurrentUser({ ...data.user, ...profile });
+        window.location.href = 'index.html';
+      } catch (err) {
+        showError(err.message || '登录失败');
+      } finally {
+        btn.textContent = '登 录';
+        btn.disabled = false;
+      }
+    });
+
+    // 注册
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+      const role = document.getElementById('regRole').value;
+      const email = document.getElementById('regEmail').value.trim();
+      const password = document.getElementById('regPassword').value;
+
+      if (!role) { showError('请选择你的身份'); return; }
+      if (password.length < 6) { showError('密码至少需要6位'); return; }
+
+      const btn = registerForm.querySelector('button');
+      btn.textContent = '注册中...';
+      btn.disabled = true;
+
+      try {
+        const name = role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME;
+        const { data, error } = await getSupabase().auth.signUp({
+          email,
+          password,
+          options: {
+            data: { name, role }
+          }
+        });
+        if (error) throw error;
+
+        if (data.user) {
+          setCurrentUser({ ...data.user, name, role });
+          showToast('注册成功！');
+          setTimeout(() => { window.location.href = 'index.html'; }, 500);
+        } else {
+          showError('注册失败，请检查邮箱是否已被使用');
+        }
+      } catch (err) {
+        showError(err.message || '注册失败');
+      } finally {
+        btn.textContent = '注 册';
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI · 我们的时光</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase.js"></script>
+  <script src="js/utils.js"></script>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <a href="index.html" class="navbar-brand">
+        AI<span class="dot"></span><span style="font-weight:400;font-size:15px;color:var(--ink-light);">我们的时光</span>
+      </a>
+      <div class="navbar-nav">
+        <a href="index.html" class="active">时间线</a>
+        <a href="album.html">相册</a>
+        <a href="messages.html">留言板</a>
+        <a href="wishes.html">愿望清单</a>
+        <a href="anniversaries.html">纪念日</a>
+      </div>
+      <div class="navbar-actions">
+        <div class="navbar-user" id="userInfo">
+          <div class="avatar avatar-ren" id="userAvatar">砚</div>
+          <span class="name" id="userName">任砚铭</span>
+        </div>
+        <button class="btn btn-outline btn-sm" id="logoutBtn">退出</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Layout -->
+  <div class="main-layout" id="app">
+
+    <!-- Timeline -->
+    <main class="timeline" id="timelineContainer">
+      <div class="page-header">
+        <h2>我们的时间线</h2>
+        <p>从 2026.06.26 开始，每一天都在这里</p>
+      </div>
+      <div id="timelineContent">
+        <div class="loading">加载中...</div>
+      </div>
+    </main>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <!-- Anniversary Counter -->
+      <div class="sidebar-card">
+        <h3>我们在一起</h3>
+        <div class="anniversary-big">
+          <div class="days" id="sidebarDays">0</div>
+          <div class="label">天</div>
+          <div class="date-range">2026.06.26 — 今天</div>
+        </div>
+      </div>
+
+      <!-- Upcoming Anniversaries -->
+      <div class="sidebar-card">
+        <h3>即将到来的纪念日</h3>
+        <ul class="mini-list" id="sidebarAnniversaries">
+          <li><span class="ml-date">—</span><span class="ml-text">暂无</span></li>
+        </ul>
+      </div>
+
+      <!-- Stats -->
+      <div class="sidebar-card">
+        <h3>我们的数据</h3>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-value" id="statPosts">0</div>
+            <div class="stat-label">条记录</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="statPhotos">0</div>
+            <div class="stat-label">张照片</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="statMessages">0</div>
+            <div class="stat-label">条留言</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="statWishes">0</div>
+            <div class="stat-label">个愿望</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Write FAB -->
+  <button class="fab" id="writeFab" title="写点什么">✏</button>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-quote">那些被遗忘的瞬间，才是真正丢失的。</div>
+    <div>AI · 我们的时光 &copy; 2026</div>
+  </footer>
+
+  <script>
+    // ============ 初始化 ============
+    let currentUser = null;
+    let allPosts = [];
+    let allProfiles = {};
+
+    (async function init() {
+      // 检查登录状态
+      if (!requireAuth()) return;
+      currentUser = getCurrentUser();
+
+      initSupabase();
+      updateUserUI();
+      updateSidebarDays();
+      await loadProfiles();
+      await loadPosts();
+      await loadSidebarData();
+      setupEvents();
+    })();
+
+    function updateUserUI() {
+      const avatar = document.getElementById('userAvatar');
+      const name = document.getElementById('userName');
+      if (currentUser) {
+        avatar.textContent = getUserAvatar(currentUser);
+        avatar.className = 'avatar ' + getUserAvatarClass(currentUser);
+        name.textContent = getUserName(currentUser);
+      }
+    }
+
+    function updateSidebarDays() {
+      document.getElementById('sidebarDays').textContent = daysSince(CONFIG.ANNIVERSARY_START);
+    }
+
+    // ============ 加载用户资料 ============
+    async function loadProfiles() {
+      const { data } = await getSupabase().from('profiles').select('*');
+      if (data) {
+        data.forEach(p => { allProfiles[p.id] = p; });
+      }
+    }
+
+    function getProfileName(userId) {
+      const p = allProfiles[userId];
+      if (!p) return '未知';
+      return p.role === 'male' ? CONFIG.MALE_NAME : CONFIG.FEMALE_NAME;
+    }
+
+    function getProfileAvatar(userId) {
+      const p = allProfiles[userId];
+      if (!p) return '?';
+      return p.role === 'male' ? CONFIG.MALE_AVATAR : CONFIG.FEMALE_AVATAR;
+    }
+
+    function getProfileAvatarClass(userId) {
+      const p = allProfiles[userId];
+      if (!p) return '';
+      return p.role === 'male' ? 'avatar-ren' : 'avatar-tian';
+    }
+
+    // ============ 加载时间线 ============
+    async function loadPosts() {
+      const container = document.getElementById('timelineContent');
+      try {
+        const { data, error } = await getSupabase()
+          .from('posts')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+        allPosts = data || [];
+        renderTimeline(allPosts);
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">加载失败：${err.message}</div>`;
+      }
+    }
+
+    function renderTimeline(posts) {
+      const container = document.getElementById('timelineContent');
+      if (posts.length === 0) {
+        container.innerHTML = `
+          <div class="card card-empty">
+            <p>还没有任何记录。</p>
+            <p>点击右下角的 ✏ 按钮，写下你们的第一条时光吧。</p>
+          </div>`;
+        return;
+      }
+
+      // 按日期分组
+      const groups = {};
+      posts.forEach(post => {
+        const dateKey = new Date(post.created_at).toLocaleDateString('zh-CN');
+        if (!groups[dateKey]) groups[dateKey] = [];
+        groups[dateKey].push(post);
+      });
+
+      let html = '';
+      for (const [dateKey, groupPosts] of Object.entries(groups)) {
+        const firstPost = groupPosts[0];
+        html += `<div class="date-divider">${getChineseDateDivider(firstPost.created_at)}</div>`;
+
+        groupPosts.forEach(post => {
+          html += renderPostCard(post);
+        });
+      }
+
+      container.innerHTML = html;
+    }
+
+    function renderPostCard(post) {
+      const name = getProfileName(post.user_id);
+      const avatar = getProfileAvatar(post.user_id);
+      const avatarClass = getProfileAvatarClass(post.user_id);
+      const isOwner = currentUser && currentUser.id === post.user_id;
+
+      let tagsHTML = '';
+      if (post.tags && post.tags.length > 0) {
+        tagsHTML = '<div class="card-tags">' +
+          post.tags.map(t => `<span class="tag">${escapeHTML(t)}</span>`).join('') +
+          '</div>';
+      }
+
+      let photosHTML = '';
+      if (post.images && post.images.length > 0) {
+        photosHTML = '<div class="card-photos">' +
+          post.images.map(img => `<div class="photo"><img src="${escapeHTML(img)}" alt="照片" loading="lazy"></div>`).join('') +
+          '</div>';
+      }
+
+      let actionsHTML = '';
+      if (isOwner) {
+        actionsHTML = `
+          <div class="card-actions">
+            <button class="btn btn-outline btn-sm" onclick="deletePost(${post.id})">删除</button>
+          </div>`;
+      }
+
+      return `
+        <article class="card" data-post-id="${post.id}">
+          <div class="card-header">
+            <div class="card-avatar ${avatarClass}">${avatar}</div>
+            <div>
+              <div class="card-author">${name}</div>
+              <div class="card-time">${formatDate(post.created_at)}</div>
+            </div>
+          </div>
+          <div class="card-body">${formatContent(post.content)}</div>
+          ${photosHTML}
+          ${tagsHTML}
+          ${actionsHTML}
+        </article>`;
+    }
+
+    async function deletePost(postId) {
+      if (!confirm('确定要删除这条记录吗？')) return;
+      const { error } = await getSupabase().from('posts').delete().eq('id', postId);
+      if (error) {
+        showToast('删除失败：' + error.message);
+        return;
+      }
+      showToast('已删除');
+      document.querySelector(`[data-post-id="${postId}"]`).remove();
+      // 重新加载，确保分组正确
+      setTimeout(() => loadPosts(), 300);
+    }
+
+    // ============ 发布新记录 ============
+    async function createPost(content, tags) {
+      if (!content.trim()) return;
+      const { data, error } = await getSupabase().from('posts').insert({
+        user_id: currentUser.id,
+        content: content.trim(),
+        tags: tags || []
+      }).select().single();
+
+      if (error) throw error;
+      showToast('发布成功！');
+      setTimeout(() => loadPosts(), 300);
+    }
+
+    // ============ 侧边栏数据 ============
+    async function loadSidebarData() {
+      // 加载纪念日
+      const { data: anniversaries } = await getSupabase()
+        .from('anniversaries')
+        .select('*')
+        .order('anniversary_date');
+
+      const annList = document.getElementById('sidebarAnniversaries');
+      if (anniversaries && anniversaries.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const upcoming = anniversaries
+          .filter(a => {
+            // 构造今年的纪念日
+            const d = new Date(a.anniversary_date);
+            const thisYear = new Date(today.getFullYear(), d.getMonth(), d.getDate());
+            return thisYear >= today;
+          })
+          .slice(0, 5);
+
+        if (upcoming.length > 0) {
+          annList.innerHTML = upcoming.map(a => {
+            const d = new Date(a.anniversary_date);
+            const thisYear = new Date(today.getFullYear(), d.getMonth(), d.getDate());
+            const remaining = Math.ceil((thisYear - today) / (1000 * 60 * 60 * 24));
+            return `
+              <li>
+                <span class="ml-date">${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}</span>
+                <span class="ml-text">${escapeHTML(a.title)}</span>
+                <span class="ml-extra">${remaining === 0 ? '今天' : '还有 ' + remaining + ' 天'}</span>
+              </li>`;
+          }).join('');
+        } else {
+          annList.innerHTML = '<li><span class="ml-text">暂无即将到来的纪念日</span></li>';
+        }
+      }
+
+      // 加载统计数据
+      const { count: postCount } = await getSupabase().from('posts').select('*', { count: 'exact', head: true });
+      const { count: msgCount } = await getSupabase().from('messages').select('*', { count: 'exact', head: true });
+      const { count: wishCount } = await getSupabase().from('wishes').select('*', { count: 'exact', head: true });
+
+      document.getElementById('statPosts').textContent = postCount || 0;
+      document.getElementById('statMessages').textContent = msgCount || 0;
+      document.getElementById('statWishes').textContent = wishCount || 0;
+
+      // 照片计数：统计所有 posts 中的 images
+      let photoCount = 0;
+      allPosts.forEach(p => {
+        if (p.images && Array.isArray(p.images)) photoCount += p.images.length;
+      });
+      document.getElementById('statPhotos').textContent = photoCount;
+    }
+
+    // ============ 事件绑定 ============
+    function setupEvents() {
+      // 写点什么
+      document.getElementById('writeFab').addEventListener('click', () => {
+        showWriteModal();
+      });
+
+      // 退出登录
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await getSupabase().auth.signOut();
+        clearCurrentUser();
+        window.location.href = 'login.html';
+      });
+
+      // 定时更新天数
+      setInterval(updateSidebarDays, 60000);
+    }
+
+    function showWriteModal() {
+      const overlay = showModal('写点什么', `
+        <div class="form-group">
+          <label>内容</label>
+          <textarea id="writeContent" placeholder="今天发生了什么？想说点什么？" rows="5"></textarea>
+        </div>
+        <div class="form-group">
+          <label>标签（用逗号分隔）</label>
+          <input type="text" id="writeTags" placeholder="例如：日常, 纪念日, 旅行">
+        </div>
+        <button class="btn btn-primary" id="submitWrite" style="width:100%">发布</button>
+      `);
+
+      overlay.querySelector('#submitWrite').addEventListener('click', async () => {
+        const content = overlay.querySelector('#writeContent').value;
+        const tagsStr = overlay.querySelector('#writeTags').value;
+        const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t);
+
+        if (!content.trim()) {
+          showToast('内容不能为空');
+          return;
+        }
+
+        try {
+          await createPost(content, tags);
+          overlay.remove();
+        } catch (err) {
+          showToast('发布失败：' + err.message);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

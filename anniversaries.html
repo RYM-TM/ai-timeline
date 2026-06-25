@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI · 纪念日</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase.js"></script>
+  <script src="js/utils.js"></script>
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <a href="index.html" class="navbar-brand">
+        AI<span class="dot"></span><span style="font-weight:400;font-size:15px;color:var(--ink-light);">我们的时光</span>
+      </a>
+      <div class="navbar-nav">
+        <a href="index.html">时间线</a>
+        <a href="album.html">相册</a>
+        <a href="messages.html">留言板</a>
+        <a href="wishes.html">愿望清单</a>
+        <a href="anniversaries.html" class="active">纪念日</a>
+      </div>
+      <div class="navbar-actions">
+        <div class="navbar-user" id="userInfo">
+          <div class="avatar avatar-ren" id="userAvatar">砚</div>
+          <span class="name" id="userName">任砚铭</span>
+        </div>
+        <button class="btn btn-outline btn-sm" id="logoutBtn">退出</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="full-page">
+    <div class="page-header">
+      <h2>纪念日</h2>
+      <p>每一个值得记住的日子</p>
+    </div>
+
+    <!-- 主纪念日大卡片 -->
+    <div class="card" style="max-width:700px;margin:0 auto 20px;text-align:center;">
+      <div class="anniversary-big">
+        <div class="days" id="mainDays">0</div>
+        <div class="label">天</div>
+        <div class="date-range">2026.06.26 — 今天</div>
+      </div>
+      <p style="margin-top:12px;color:var(--ink-light);font-size:14px;">我们在一起了</p>
+    </div>
+
+    <!-- 添加纪念日 -->
+    <div class="card" style="max-width:700px;margin:0 auto 20px;">
+      <div class="form-group">
+        <label>添加纪念日</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <input type="text" id="annTitle" placeholder="纪念日名称" style="flex:1;min-width:140px;">
+          <input type="date" id="annDate" style="flex:1;min-width:140px;">
+          <button class="btn btn-primary" id="addAnnBtn">添加</button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <input type="text" id="annDesc" placeholder="描述（可选）">
+      </div>
+    </div>
+
+    <!-- 纪念日列表 -->
+    <div class="card" style="max-width:700px;margin:0 auto;">
+      <div class="card-body" id="annList">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentUser = null;
+
+    (async function init() {
+      if (!requireAuth()) return;
+      currentUser = getCurrentUser();
+      initSupabase();
+      updateUserUI();
+      document.getElementById('mainDays').textContent = daysSince(CONFIG.ANNIVERSARY_START);
+      await loadAnniversaries();
+      setupEvents();
+    })();
+
+    function updateUserUI() {
+      document.getElementById('userAvatar').textContent = getUserAvatar(currentUser);
+      document.getElementById('userAvatar').className = 'avatar ' + getUserAvatarClass(currentUser);
+      document.getElementById('userName').textContent = getUserName(currentUser);
+    }
+
+    async function loadAnniversaries() {
+      const container = document.getElementById('annList');
+      try {
+        const { data, error } = await getSupabase()
+          .from('anniversaries')
+          .select('*')
+          .order('anniversary_date');
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          container.innerHTML = '<p style="text-align:center;color:var(--ink-muted);padding:20px;">还没有纪念日</p>';
+          return;
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        container.innerHTML = data.map(a => {
+          const d = new Date(a.anniversary_date);
+          const thisYear = new Date(today.getFullYear(), d.getMonth(), d.getDate());
+          const remaining = Math.ceil((thisYear - today) / (1000 * 60 * 60 * 24));
+          const pastDays = Math.floor((today - d) / (1000 * 60 * 60 * 24));
+
+          let statusText = '';
+          if (remaining === 0) {
+            statusText = '<span style="color:var(--rose);font-weight:600;">今天！</span>';
+          } else if (remaining > 0 && remaining <= 30) {
+            statusText = `<span style="color:var(--rose);">还有 ${remaining} 天</span>`;
+          } else if (remaining > 0) {
+            statusText = `<span style="color:var(--ink-muted);">还有 ${remaining} 天</span>`;
+          } else {
+            statusText = `<span style="color:var(--ink-muted);">已过去 ${pastDays} 天</span>`;
+          }
+
+          return `
+            <div class="wish-item">
+              <div class="wish-info">
+                <div class="wish-title">${escapeHTML(a.title)}</div>
+                <div class="wish-desc">${a.anniversary_date} ${a.description ? '· ' + escapeHTML(a.description) : ''}</div>
+                <div class="wish-meta">${statusText}</div>
+              </div>
+              <button class="btn btn-outline btn-sm ann-delete" data-id="${a.id}">删除</button>
+            </div>`;
+        }).join('');
+
+        // 绑定删除
+        container.querySelectorAll('.ann-delete').forEach(btn => {
+          btn.addEventListener('click', async function() {
+            const id = parseInt(this.dataset.id);
+            if (!confirm('确定删除这个纪念日吗？')) return;
+            const { error } = await getSupabase().from('anniversaries').delete().eq('id', id);
+            if (error) {
+              showToast('删除失败：' + error.message);
+              return;
+            }
+            showToast('已删除');
+            loadAnniversaries();
+          });
+        });
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">加载失败：${err.message}</div>`;
+      }
+    }
+
+    function setupEvents() {
+      document.getElementById('addAnnBtn').addEventListener('click', async () => {
+        const title = document.getElementById('annTitle').value.trim();
+        const date = document.getElementById('annDate').value;
+        const desc = document.getElementById('annDesc').value.trim();
+
+        if (!title) { showToast('请输入纪念日名称'); return; }
+        if (!date) { showToast('请选择日期'); return; }
+
+        const btn = document.getElementById('addAnnBtn');
+        btn.disabled = true;
+        btn.textContent = '添加中...';
+
+        try {
+          const { error } = await getSupabase().from('anniversaries').insert({
+            title,
+            anniversary_date: date,
+            description: desc || null
+          });
+          if (error) throw error;
+          document.getElementById('annTitle').value = '';
+          document.getElementById('annDate').value = '';
+          document.getElementById('annDesc').value = '';
+          showToast('纪念日已添加！');
+          await loadAnniversaries();
+        } catch (err) {
+          showToast('添加失败：' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '添加';
+        }
+      });
+
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await getSupabase().auth.signOut();
+        clearCurrentUser();
+        window.location.href = 'login.html';
+      });
+    }
+  </script>
+</body>
+</html>
